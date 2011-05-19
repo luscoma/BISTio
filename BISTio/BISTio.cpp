@@ -99,26 +99,52 @@ bool BISTio::GetTDOBits(bool tdi, bool tms, BYTE *tdo, int bits)
 }
 BYTE *BISTio::ReverseBits(BYTE *data, int bits)
 {
-	int length = bits/8+bits%8;
-	if (bits % 8 == 0)			// simple case, we just need to switch the bytes since we're on a byte boundary
-	{
-		if (length == 1)
-			ReverseByte(data[0]);
-		else
-		{
-			for (int i = 0, length = bits/8; i < length; i++)
-			{
-				// Reverse Bits
-				BYTE swap = data[length-i-1];			// store one of the bytes
-				ReverseByte(swap);						// reverse the bits in this byte
-				ReverseByte(data[i]);					// reverse the bits in the other byte
+	// So this is sort of complicated because we have to reverse the bits not the byte array
+	// This means if the bits don't fall on a byte boundary it can get hairy
+	int length = bits / 8 + bits % 8;
+	int shift = bits % 8;
 
-				// Swap bytes
-				data[length-i-1] = data[i];
-				data[i] = swap;
-			}
-		}
+	// Handle Simple Case
+	if (data == NULL)
+		return data;
+	else if (length == 1)
+	{
+		ReverseByte(data[0]);
+		data[0] = data[0] >> shift;
+		return data;
 	}
+
+	// Handle Complex Case
+	// NOTE: There is a complex way to make this exactly n element operations, but for easiness we'll do two passes, 
+	// one to reverse the array, then one to repack the bits if necessary
+	// This will make it worst case something like 3/2n
+	unsigned short swapBuffer = 0;
+	for (int i = 0, far = length-i-1; i <= length/2; i++, far = length-i-1)
+	{
+		// Reverse Both Bytes
+		ReverseByte(data[i]);
+		ReverseByte(data[far]);
+		
+		// Swap them (borrowing the swapBuffer)
+		swapBuffer = data[far];
+		data[far] = data[i];
+		data[i] = (BYTE)swapBuffer;
+	}
+	if (length%2 == 1)						// if it is odd, we need to reverse the bits of the middle byte
+		ReverseByte(data[length/2+1]);		// even though it doesn't change position
+
+	// Repack the bits if necessary
+	// If the bits don't end on a word boundary we have to repack them together after reversing them
+	if (shift == 0)							// if we landed on a word boundary, no repacking necessary
+		return data;
+	swapBuffer = data[0] >> shift;			// grab the first byte and shift it back into its place
+	for (int i = 1; i < length; i++)
+	{
+		swapBuffer |= data[i] << (8-shift);	// or in the new byte shifted to account of the misalignment
+		data[i-1] = swapBuffer & 0xFF;		// set the last 8 bits as the previous byte
+		swapBuffer = swapBuffer >> 8;		// shift the swapBufer 8 bits so it can continue this trend
+	}
+	data[length-1] = swapBuffer & 0xFF;
 
 	return data;
 }
