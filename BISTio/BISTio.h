@@ -338,16 +338,78 @@ public:
 		@returns true if successful
 	*/
 	bool ShiftBit(bool tdi, bool *tdo = 0, bool last = false);
-};
+	/**
+		Shifts in a character string of binary and returns tdo if requested
 
-/**
-	This class defines a simple spi interface
-	It uses tdi as the input to the system and reads back data via tdo
-*/
-class BISTIO_API SPIio
-{
-private:
-public:
-};
+		The binary string should consist the numbers 1 and 0, "1010101"
 
+		@param tdi		Character representation of binary string
+		@param tdo		Pointer to the storage of the output, must be ceil(strlen(tdi)/8)
+		@param last		If last shift will exit shift mode
 
+		@returns true if successful
+	*/
+	bool ShiftBinary(char *tdi, BYTE *tdo = 0, bool last = false);
+	/**
+		Shifts a byte of data in and returns tdo
+
+		@param tdi		Byte to shift
+		@param tdo		Pointer to the output byte should be length of 1
+		@param last		If last shift will exit shift mode
+		
+		@returns true if successful
+	*/
+	bool ShiftByte(BYTE tdi, BYTE *tdo = 0, bool last = false);
+	/**
+		Shifts an array of bytes in and returns tdo
+
+		@param tdi		Bytes to shift
+		@param length	Length of byte array
+		@param tdo		Optional output buffer
+		@param last		If last shift will exit shift mode
+
+		@returns true if successful
+	*/
+	bool ShiftBytes(BYTE *tdi, int length, BYTE *tdo = 0, bool last = false);
+
+	/**
+		Shifts a unsigned short in and returns two bytes of tdo
+
+		@param tdi		Unsigned short to shift
+		@param tdo		Optional output buffer (2 bytes)
+		@param last		If last shift will exit shift mode
+
+		@returns true if successful
+	*/
+	bool ShiftUShort(unsigned short tdi, BYTE *tdo = 0, bool last = false);
+	/**
+		Shifts a short in and returns two bytes of tdo
+
+		@param tdi		Short to shift
+		@param tdo		Optional output buffer (2 bytes)
+		@param last		If last shift will exit shift mode
+
+		@returns true if successful
+	*/
+	bool ShiftShort(short tdi, BYTE *tdo = 0, bool last = false);
+	/**
+		Shifts a unsigned integer in and returns four bytes of tdo
+
+		@param tdi		Unsigned integer to shift
+		@param tdo		Optional output buffer (4 bytes)
+		@param last		If last shift will exit shift mode
+
+		@returns true if successful
+	*/
+	bool ShiftUInt(unsigned int tdi, BYTE *tdo = 0, bool last = false);
+	/**
+		Shifts a integer in and returns four bytes of tdo
+
+		@param tdi		integer to shift
+		@param tdo		Optional output buffer (4 bytes)
+		@param last		If last shift will exit shift mode
+
+		@returns true if successful
+	*/
+	bool ShiftInt(int tdi, BYTE *tdo = 0, bool last = false);
+}; 

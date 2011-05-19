@@ -238,13 +238,15 @@ bool BSio::SetBSInstruction(enum BSInstruction instruction)
 	// Send the VERTEX header if required
 	// NOTE: the instruction gets reversed so we send in the MSBs first
 	if (this->_family == VERTEX)
-		this->ClockTck(4,1,0);
+		if (!this->ClockTck(4,1,0))
+			return false;
 
 	// Send the remaining bits MSB of instruction first (bit 5 is the MSB)
 	for (int mask = 32; mask > 1; mask = mask >> 2)
-		this->ClockTck(1,instruction & mask == mask,0);
-	this->ClockTck(1,instruction & 1 == 1, true);		// TMS has to be set to 1 so we finish our shift operation
-
+		if (!this->ClockTck(1,(instruction & mask) == mask,0))
+			return false;
+	if (!this->ClockTck(1,(instruction & 1) == 1, true))		// TMS has to be set to 1 so we finish our shift operation
+		return false;
 
 	_state = IR_EXIT1;
 	return true;
@@ -280,11 +282,158 @@ enum BSDevice BSio::GetDevice()
 		return dvcUnknown;
 	}
 }
-bool BSio::ShiftBit(bool tdi, bool *tdo = 0, bool last = false)
+bool BSio::ShiftBit(bool tdi, bool *tdo, bool last)
 {
 	BYTE out = 0;
 	if (!this->GetTDOBits(tdi,last,&out,1))
 		return false;
 	*tdo = out != 0;
+
+	if (last)
+		_state = DR_EXIT1;
+	return true;
+}
+bool BSio::ShiftBinary(char *tdi, BYTE *tdo, bool last)
+{
+	// Calculate required byte array length
+	int bits = strlen(tdi);
+	int length = bits/8;
+	if (bits%8 > 0)
+		length++;
+
+	// Create array and zero it out
+	BYTE *send = new BYTE[length];
+	memset(send,0,sizeof(BYTE)*length);
+
+	// Loop through binary string
+	for (int i = 0, b = 0; i < bits; i++, b = i/8)
+	{
+		if (tdi[i] != '0')
+			send[b] |= 1 << i%8;
+	}
+
+	// Send and Retreive Results
+	bool result = this->SendTDIBits(send, last ? bits-1 : bits,false,tdo);
+	delete [] send;
+	if (!result)
+		return false;
+
+	// If last shift handle the last bit when we shift out
+	if (last)
+	{
+		bool out = false;
+		if (!this->ShiftBit(tdi[bits-1] != '0',&out,true))
+			return false;
+		else if (tdo != NULL && out)		// if TDO isn't null and the bs interface returned a 1, lets set that in the tdo array
+			tdo[length-1] |= 1 << bits%8;
+	}
+
+	return true;
+}
+bool BSio::ShiftByte(BYTE tdi, BYTE *tdo, bool last)
+{
+	if (!this->SendTDIBits(&tdi,last ? 7 : 8,false,tdo))
+		return false;
+
+	if (last)
+	{
+		bool output = false;
+		if (!ShiftBit((tdi & 0x80) == 0x80, &output, true))
+			return false;
+		else if (tdo != NULL && output)
+			tdo[0] |= 0x80;
+	}
+	return true;
+}
+bool BSio::ShiftBytes(BYTE *tdi, int length, BYTE *tdo, bool last)
+{
+	int bits = length*8;
+	if (!this->SendTDIBits(tdi,last ? bits -1 : bits, false, tdo))
+		return false;
+
+	if (last)
+	{
+		bool output = false;
+		if (!ShiftBit((tdi[length-1] & 0x80) == 0x80, &output, true))
+			return false;
+		else if (tdo != NULL && output)
+			tdo[length-1] |= 0x80;
+	}
+	return true;
+}
+bool BSio::ShiftUShort(unsigned short tdi, BYTE *tdo, bool last)
+{
+	BYTE send[2];
+	send[0] = tdi & 0x00FF;
+	send[1] = (tdi & 0xFF00) >> 8;
+	if (!this->SendTDIBits(send,last ? 15 : 16,false,tdo))
+		return false;
+
+	if (last)
+	{
+		bool output = false;
+		if (!ShiftBit((tdi &0x8000) == 0x8000, &output, true))
+			return false;
+		else if (tdo != NULL && output)
+			tdo[1] |= 0x80;
+	}
+	return true;
+}
+bool BSio::ShiftShort(short tdi, BYTE *tdo, bool last)
+{
+	BYTE send[2];
+	send[0] = tdi & 0x00FF;
+	send[1] = (tdi & 0xFF00) >> 8;
+	if (!this->SendTDIBits(send,last ? 15 : 16,false,tdo))
+		return false;
+
+	if (last)
+	{
+		bool output = false;
+		if (!ShiftBit((tdi &0x8000) == 0x8000, &output, true))
+			return false;
+		else if (tdo != NULL && output)
+			tdo[1] |= 0x80;
+	}
+	return true;
+}
+bool BSio::ShiftUInt(unsigned int tdi, BYTE *tdo, bool last)
+{
+	BYTE send[4];
+	send[0] = tdi & 0x000000FF;
+	send[1] = (tdi & 0x0000FF00) >> 8;
+	send[2] = (tdi & 0x00FF0000) >> 16;
+	send[3] = (tdi & 0xFF000000) >> 24;
+	if (!this->SendTDIBits(send,last ? 31 : 32,false,tdo))
+		return false;
+
+	if (last)
+	{
+		bool output = false;
+		if (!ShiftBit((tdi &0x80000000) == 0x80000000, &output, true))
+			return false;
+		else if (tdo != NULL && output)
+			tdo[3] |= 0x80;
+	}
+	return true;
+}
+bool BSio::ShiftInt(int tdi, BYTE *tdo, bool last)
+{
+	BYTE send[4];
+	send[0] = tdi & 0x000000FF;
+	send[1] = (tdi & 0x0000FF00) >> 8;
+	send[2] = (tdi & 0x00FF0000) >> 16;
+	send[3] = (tdi & 0xFF000000) >> 24;
+	if (!this->SendTDIBits(send,last ? 31 : 32,false,tdo))
+		return false;
+
+	if (last)
+	{
+		bool output = false;
+		if (!ShiftBit((tdi &0x80000000) == 0x80000000, &output, true))
+			return false;
+		else if (tdo != NULL && output)
+			tdo[3] |= 0x80;
+	}
 	return true;
 }

@@ -81,6 +81,7 @@ bool BISTio::SendTDITMSBits(BYTE *tdi, BYTE *tms, int bits, BYTE *tdo)
 	// Calculate length and new array to pack
 	int length = ((bits / 8) + 1) * 2;		// get the number of bytes and multiply the length by two since each word is 2 bits
 	BYTE *words = new BYTE[length]; 
+	memset(words,0,sizeof(BYTE)*length);
 	for (int i = 0; i < bits; i++)
 	{
 		words[i/4] |= (tdi[i/8] << ((i%4)*2));
@@ -88,7 +89,11 @@ bool BISTio::SendTDITMSBits(BYTE *tdi, BYTE *tms, int bits, BYTE *tdo)
 	}
 
 	if (DjtgPutTmsTdiBits(this->_hif, words, tdo, bits, FALSE) == 0)
+	{
+		delete [] words;
 		return false;
+	}
+	delete [] words;
 	return true;
 }
 bool BISTio::GetTDOBits(bool tdi, bool tms, BYTE *tdo, int bits)
@@ -119,15 +124,19 @@ BYTE *BISTio::ReverseBits(BYTE *data, int bits)
 	// one to reverse the array, then one to repack the bits if necessary
 	// This will make it worst case something like 3/2n
 	unsigned short swapBuffer = 0;
-	for (int i = 0, far = length-i-1; i <= length/2; i++, far = length-i-1)
+	int farIndex = 0;
+	for (int i = 0; i <= length/2;  i++)
 	{
+		// Update the far index
+		farIndex = length-i-1,
+
 		// Reverse Both Bytes
 		ReverseByte(data[i]);
-		ReverseByte(data[far]);
+		ReverseByte(data[farIndex]);
 		
 		// Swap them (borrowing the swapBuffer)
-		swapBuffer = data[far];
-		data[far] = data[i];
+		swapBuffer = data[farIndex];
+		data[farIndex] = data[i];
 		data[i] = (BYTE)swapBuffer;
 	}
 	if (length%2 == 1)						// if it is odd, we need to reverse the bits of the middle byte
