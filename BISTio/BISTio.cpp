@@ -58,7 +58,7 @@ BYTE BISTio::GetPins()
 		return 0xFF;
 	return tms << 3 | tdi << 2 | tdo << 1 | tck;
 }
-bool BISTio::ClockTck(unsigned long cycles, bool tms, bool tdi)
+bool BISTio::ClockTck(unsigned long cycles, bool tdi, bool tms)
 {
 	if (DjtgClockTck(this->_hif, tms, tdi, cycles,FALSE) == 0)
 		return false;
@@ -76,9 +76,56 @@ bool BISTio::SendTMSBits(BYTE *tms, int bits, bool tdi, BYTE *tdo)
 		return false;
 	return true;
 }
+bool BISTio::SendTDITMSBits(BYTE *tdi, BYTE *tms, int bits, BYTE *tdo)
+{
+	// Calculate length and new array to pack
+	int length = ((bits / 8) + 1) * 2;		// get the number of bytes and multiply the length by two since each word is 2 bits
+	BYTE *words = new BYTE[length]; 
+	for (int i = 0; i < bits; i++)
+	{
+		words[i/4] |= (tdi[i/8] << ((i%4)*2));
+		words[i/4] |= (tdi[i/8] << ((i%4)*2+1));
+	}
+
+	if (DjtgPutTmsTdiBits(this->_hif, words, tdo, bits, FALSE) == 0)
+		return false;
+	return true;
+}
 bool BISTio::GetTDOBits(bool tdi, bool tms, BYTE *tdo, int bits)
 {
 	if (DjtgGetTdoBits(this->_hif, tdi,tms,tdo,bits,FALSE) == 0)
 		return false;
 	return true;
+}
+BYTE *BISTio::ReverseBits(BYTE *data, int bits)
+{
+	int length = bits/8+bits%8;
+	if (bits % 8 == 0)			// simple case, we just need to switch the bytes since we're on a byte boundary
+	{
+		if (length == 1)
+			ReverseByte(data[0]);
+		else
+		{
+			for (int i = 0, length = bits/8; i < length; i++)
+			{
+				// Reverse Bits
+				BYTE swap = data[length-i-1];			// store one of the bytes
+				ReverseByte(swap);						// reverse the bits in this byte
+				ReverseByte(data[i]);					// reverse the bits in the other byte
+
+				// Swap bytes
+				data[length-i-1] = data[i];
+				data[i] = swap;
+			}
+		}
+	}
+
+	return data;
+}
+BYTE& BISTio::ReverseByte(BYTE &data)
+{
+	data = (data & 0x0F) << 4 | (data & 0xF0) >> 4;
+	data = (data & 0x33) << 2 | (data & 0xCC) >> 2;
+	data = (data & 0x55) << 1 | (data & 0xAA) >> 1;
+	return data;
 }

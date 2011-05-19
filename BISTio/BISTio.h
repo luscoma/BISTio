@@ -22,7 +22,87 @@ typedef unsigned char BYTE;		// another -_-
 #include "dpcdefs.h"			// defines several error message
 
 /* Enumeration Declarations */
-// In a second -_-
+/**
+	Enumerates the different Boundary Scan
+	States
+
+	This is used to denote which state the system is currently in
+	or which state to move to
+*/
+enum BSState
+{
+	TEST_LOGIC_RESET	=	0, 
+	RUN_IDLE			=	1,
+	DR_SELECT			=	2,
+	DR_CAPTURE			=	3,
+	DR_SHIFT			=	4,
+	DR_EXIT1			=	5,
+	DR_EXIT2			=	6,
+	DR_PAUSE			=	7,
+	DR_UPDATE			=	8,
+	IR_SELECT			=	9,
+	IR_CAPTURE			=	10,
+	IR_SHIFT			=	11,
+	IR_EXIT1			=	12,
+	IR_EXIT2			=	13,
+	IR_PAUSE			=	14,
+	IR_UPDATE			=	15,
+};
+/**
+	Enumerates the different supported FPGA families
+	for boundary scan
+
+	This is used to denote the specific fpga that is connected when using boundary scan
+	If none is specified when connecting, the default is the SPARTAN3.  Vertex causes it
+	to treat the IR register as 10-bits.
+*/
+enum BSFPGA
+{
+	SPARTAN3,
+	VERTEX
+};
+/**
+	The device the system is connected to
+
+	This will only work with Xilinx FPGAs which tell us the board ID 
+*/
+enum BSDevice
+{
+	dvcUnknown	=	0x0,
+	dvcS1000	=	0x01428093,
+	dvcS200		=	0x01414093
+};
+/**
+	User to use for various operations
+
+	These are used in the SetBSUser function when setting the IR register.
+	In VERTEX mode, these are padded to make a 10-bit instruction.  Also User3
+	and User4 are not valid in Spartan 3.
+*/
+enum BSInstruction
+{
+	// Test Modes
+	EXTEST		=	0x00,		//000000
+	SAMPLE		=	0x01,		//000001	
+	INTEST		=	0x07,		//000111
+
+	// Configuration Modes
+	READBACK	=	0x04,		//000100
+	CONFIGURE	=	0x05,		//000101
+
+	// User Modes
+	USER1		=	0x02,		//000010
+	USER2		=	0x03,		//000011
+	USER3		=	0x22,		//100010	(VERTEX Only)
+	USER4		=	0x23,		//100011	(VERTEX Only)
+
+	// Info Instructions
+	IDCODE		=	0x08,		//001000
+	USERCODE	=	0x09,		//001001
+
+	// Other 
+	BYPASS		=	0xFF,		//111111
+};
 
 /**
 	This class is an abstract class which defines a basic interface for other classes to implement 
@@ -105,7 +185,7 @@ public:
 
 		@returns true if successful
 	*/
-	bool ClockTck(unsigned long cycles, bool tms, bool tdi);
+	bool ClockTck(unsigned long cycles, bool tdi, bool tms);
 	/**
 		Sends a given number of tdi bits into the the circuit
 		Starting at the lsb of tdi[0] and going for the specified number of bits.
@@ -132,6 +212,16 @@ public:
 		@param tdo			Byte array to store tdo values (NULL if unused)
 	*/
 	bool SendTMSBits(BYTE *tms, int bits, bool tdi, BYTE *tdo = 0);
+	/**
+		Sends a stream of TDI and TMS bits into the circuit
+		The number of bits in tdi and tms must be the same
+
+		@param tdi			Byte array with bits to set as tdi
+		@param tms			Byte array with bits to set as tms
+		@param bits			Number of bits to shift in 
+		@param tdo			Byte array to store tdo values (NULL if unused)
+	*/
+	bool SendTDITMSBits(BYTE *tdi, BYTE *tms, int bits, BYTE *tdo = 0);
 	/**
 		Sets tdi and tms then retreives bits from tdo storing them in an array
 		The bits retreived are stored in the lsb of tdo[0] first
@@ -162,6 +252,21 @@ public:
 		@param iDescLeng	Length of szErrorDesc in characters
 	*/
 	static void StringFromERC(ERC erc, char *szErrorName, int iNameLength, char *szErrorDesc, int iDescLen);
+	/**
+		Reverse the bits in a byte array
+
+		@param data			Byte Array 
+		@param bits			Number of bits in array
+
+		@returns the data array reversed
+	*/
+	static BYTE *ReverseBits(BYTE *data, int bits);
+	/**
+		Reverses a byte
+
+		@param data		Byte to reverse
+	*/
+	static BYTE& ReverseByte(BYTE &data);
 };
 
 /**
@@ -170,9 +275,69 @@ public:
 	modifications
 */
 class BISTIO_API BSio
+	: public BISTio
 {
 private:
+	/**
+		Holds the current boundary scan state
+	*/
+	enum BSState _state;
+	/**
+		Holds the fpga family we're connected to
+	*/
+	enum BSFPGA	_family;
+
 public:
+	/**
+		Connects to an FGPA using boundary scan
+
+		@param family	Family of FPGA connecting to
+
+		@returns True if successful
+	*/
+	bool Connect(enum BSFPGA family = SPARTAN3);
+	/**
+		Attempts to retrieve the board
+		That the program is communicating with
+
+		@returns The board being communicated with
+	*/
+	enum BSDevice GetDevice();
+	/**
+		Moves the device to a specified boundary scan state
+
+		@attention Moving out of either shift state this way is not recommend since it will push an extra 0 into the shift register on exit.  The shift functions should be used to leave the shift state.
+
+		@param bstate State to move boundary scan to
+		
+		@returns true if successful
+	*/
+	bool GotoBSState(enum BSState bstate);
+	/**
+		Returns the current boundary scan state
+
+		@returns Current BS State
+	*/
+	enum BSState GetBSState();
+	/**
+		Sets the instruction in the IR register (commonly used for User mode selection)
+
+		@param	user User to set
+
+		@returns True if successful
+	*/	
+	bool SetBSInstruction(enum BSInstruction user);
+
+	/**
+		Shifts in a bit and returns tdo
+
+		@param tdi		Bit to shift in
+		@param tdo		Pointer to storage of output
+		@param last		If last shift will finish shift mode
+
+		@returns true if successful
+	*/
+	bool ShiftBit(bool tdi, bool *tdo = 0, bool last = false);
 };
 
 /**
