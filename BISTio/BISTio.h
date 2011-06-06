@@ -17,6 +17,7 @@
 typedef unsigned short WORD;	// required in dpcdefs.h and we're not including windows.h by default
 typedef unsigned long HIF;		// used so we don't have to make the client include dpcdecl.h
 typedef unsigned char BYTE;		// another -_-
+typedef int BOOL;
 
 // Includes
 #include "dpcdefs.h"			// defines several error message
@@ -121,12 +122,24 @@ public:
 	*/
 	BISTio();
 	/**
+		Handles clean up on destruction
+		Will disconnect if connected
+	*/
+	~BISTio();
+	/**
 		Sets up the USB for the first use or
 		Reconfigures it for talking with the programmer
 
 		@returns false if mode is not set to USB
 	*/
 	bool ConfigureUSB();
+	/**
+		Returns the number of devices stored in the device table
+
+		@returns -1 in case of error, otherwise number of devices
+	*/
+	int GetNumberOfDevices();
+
 	/**
 		Disconnects from the USB device if connected
 		Ignored in parallel mode
@@ -147,16 +160,6 @@ public:
 		@returns true if connected
 	*/
 	bool IsConnected();
-	/**
-		Terminates any DPC call open
-	*/
-	void Shutdown();
-	/**
-		Returns the name of the connected device
-
-		@returns The current name
-	*/
-	char *GetDeviceName();
 
 	/**
 		Set the pins of the JTAG cable to a value
@@ -251,7 +254,7 @@ public:
 		@param szErrorDesc	Description of Error
 		@param iDescLeng	Length of szErrorDesc in characters
 	*/
-	static void StringFromERC(ERC erc, char *szErrorName, int iNameLength, char *szErrorDesc, int iDescLen);
+	static BOOL StringFromERC(ERC erc, char *szErrorName, int iNameLength, char *szErrorDesc, int iDescLen);
 	/**
 		Reverse the bits in a byte array
 
@@ -266,7 +269,7 @@ public:
 
 		@param data		Byte to reverse
 	*/
-	static BYTE& ReverseByte(BYTE &data);
+	static BYTE ReverseByte(BYTE data);
 };
 
 /**
@@ -349,7 +352,7 @@ public:
 
 		@returns true if successful
 	*/
-	bool ShiftBinary(char *tdi, BYTE *tdo = 0, bool last = false);
+	bool ShiftBinary(const char *tdi, BYTE *tdo = 0, bool last = false);
 	/**
 		Shifts a byte of data in and returns tdo
 

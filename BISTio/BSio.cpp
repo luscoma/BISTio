@@ -9,19 +9,20 @@
 
 bool BSio::Connect(enum BSFPGA family)
 {
-	if (BISTio::Connect())
+	if (!((BISTio *)this)->Connect())
 		return false;
 
 	_family = family;
-	GotoBSState(TEST_LOGIC_RESET);
+	if (!GotoBSState(TEST_LOGIC_RESET))
+		return false;
 	return true;
 }
 bool BSio::GotoBSState(enum BSState bstate)
 {
 	if (bstate == TEST_LOGIC_RESET)	// the following ensures me make it to the reset state, even if were already in it
 	{								// this ensures a first call to reset is executed so the machine is put in a known state
-		BYTE tms = 0xFF;
-		this->SendTMSBits(&tms,7,0);	// we set tms to a 1 and clock 7 times
+		if (!this->ClockTck(7,false,true))
+			return false;
 		
 		this->_state = bstate;
 		return true;
@@ -59,11 +60,13 @@ bool BSio::GotoBSState(enum BSState bstate)
 				case IR_UPDATE:
 					if (!this->ClockTck(1,false,true))	// clock once with tms = 1 to move to the IR side of the TAP controller
 						return false;
+					_state = IR_SELECT;
 					break;
 				// Any Other State
 				default:
 					if (!this->ClockTck(1,false,false))	// clock once with tms = 0 to move to the DR side of the TAP controller
 						return false;
+					_state = DR_CAPTURE;
 					break;
 			}
 		}
@@ -78,6 +81,7 @@ bool BSio::GotoBSState(enum BSState bstate)
 		else
 		{
 			if (!this->ClockTck(1,false,false))	// clock once with tms = 0 to move into shift state
+				return false;
 			_state = DR_SHIFT;
 		}
 		break;
@@ -176,12 +180,12 @@ bool BSio::GotoBSState(enum BSState bstate)
 		{
 		case IR_PAUSE:
 		case IR_EXIT2:
-			if (!this->ClockTck(1,false,true))	// set tms=1 and move to pause
+			if (!this->ClockTck(1,false,false))	// set tms=1 and move to pause
 				return false;
 			_state = IR_PAUSE;
 			break;
 		default:
-			if (!this->ClockTck(1,false,false))	// set tms=0 and move to update
+			if (!this->ClockTck(1,false,true))	// set tms=0 and move to update
 				return false;
 			_state = IR_UPDATE;
 			break;
@@ -232,23 +236,25 @@ bool BSio::SetBSInstruction(enum BSInstruction instruction)
 	GotoBSState(IR_SHIFT);			// goto IR_SHIFT
 
 	// Bypass the Flash Device (write 8 1's)
-	for (int i = 0; i < 8; i++)
-		this->ClockTck(8,1,0);
+	this->ClockTck(8,1,0);
 
-	// Send the VERTEX header if required
-	// NOTE: the instruction gets reversed so we send in the MSBs first
-	if (this->_family == VERTEX)
-		if (!this->ClockTck(4,1,0))
-			return false;
-
-	// Send the remaining bits MSB of instruction first (bit 5 is the MSB)
-	for (int mask = 32; mask > 1; mask = mask >> 2)
-		if (!this->ClockTck(1,(instruction & mask) == mask,0))
-			return false;
-	if (!this->ClockTck(1,(instruction & 1) == 1, true))		// TMS has to be set to 1 so we finish our shift operation
+	// Shift in the instruction
+	BYTE tms = this->_family == VERTEX ? 0x0 : 0x20;	// if this is a spartan3 then we need to shift 6 bits, so tms needs to be 100000 (0x20)
+														// otherwise VERTEX is 10 bits so we must send four bits of padding so tms should stay zero so we stay in the shift state
+	BYTE tdi = (BYTE)instruction;						// convert instruction to a byte so we can use it in the tditmsbits command
+	if (!this->SendTDITMSBits(&tdi,&tms,6))				// shifts in the six bits of the instruction LSB first
 		return false;
 
+	// Send the VERTEX padding if this is a vertex FPGA
+	if (this->_family == VERTEX)
+	{
+		tms = 0x08;
+		if (!this->SendTMSBits(&tms,4,true))		// we have to send four bits to pad the VERTEX register since its 10 bits long
+			return false;							// so we just send an additional four bits with tms as 1000 (0x08) and tdi as 1111
+	}
+
 	_state = IR_EXIT1;
+	GotoBSState(RUN_IDLE);
 	return true;
 }
 enum BSDevice BSio::GetDevice()
@@ -287,13 +293,14 @@ bool BSio::ShiftBit(bool tdi, bool *tdo, bool last)
 	BYTE out = 0;
 	if (!this->GetTDOBits(tdi,last,&out,1))
 		return false;
-	*tdo = out != 0;
+	if (tdo != NULL)
+		*tdo = (out != 0);
 
 	if (last)
 		_state = DR_EXIT1;
 	return true;
 }
-bool BSio::ShiftBinary(char *tdi, BYTE *tdo, bool last)
+bool BSio::ShiftBinary(const char *tdi, BYTE *tdo, bool last)
 {
 	// Calculate required byte array length
 	int bits = strlen(tdi);
@@ -325,7 +332,7 @@ bool BSio::ShiftBinary(char *tdi, BYTE *tdo, bool last)
 		if (!this->ShiftBit(tdi[bits-1] != '0',&out,true))
 			return false;
 		else if (tdo != NULL && out)		// if TDO isn't null and the bs interface returned a 1, lets set that in the tdo array
-			tdo[length-1] |= 1 << bits%8;
+			tdo[length-1] |= 1 << ((bits-1)%8);
 	}
 
 	return true;

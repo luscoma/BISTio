@@ -13,6 +13,7 @@
 
 // BISTio Base Class
 BISTio::BISTio() { this->_hif = hifInvalid; }
+BISTio::~BISTio() { if (this->IsConnected()) { this->Disconnect(); } }
 bool BISTio::ConfigureUSB()
 {
 	if (DmgrOpenDvcMg(NULL) == 0)
@@ -22,9 +23,13 @@ bool BISTio::ConfigureUSB()
 bool BISTio::Connect()
 {
 	// Check to see if we're already connected
-	if (this->_hif != NULL)
+	if (this->_hif != hifInvalid)
 		return false;
-
+	
+	// Check if there are enough devices connected to justify trying
+	if (this->GetNumberOfDevices() == 0)	// interestingly there is a strange case here, enumeration can fail the second time its enumerated? or if its already been 
+		return false;						// enumerated? but the device is really there... so I'm not sure how that works we don't catch errors here just if the device
+											// number returned is explicitly 0 and not -1
 	// Retreive the first device in the table
 	DVC dvc;
 	memset(&dvc,0,sizeof(dvc));
@@ -32,7 +37,7 @@ bool BISTio::Connect()
 		return false;	// no device exists
 
 	// Open the device
-	if (DmgrOpen(&this->_hif, dvc.szName) == 0)
+	if (DmgrOpen(&this->_hif, dvc.szConn) == 0)
 		return false;
 
 	// Enable JTAG for this device
@@ -49,6 +54,14 @@ bool BISTio::Disconnect()
 		return false;
 	this->_hif = hifInvalid;
 	return true;
+}
+bool BISTio::IsConnected() { return this->_hif != hifInvalid; }
+int BISTio::GetNumberOfDevices()
+{
+	int devices = 0;
+	if (DmgrEnumDevices(&devices) == 0)
+		return -1;
+	return devices;
 }
 bool BISTio::SetPins(bool tdi, bool tms, bool tck) { return DjtgSetTmsTdiTck(this->_hif,tms,tdi,tck) != 0; }
 BYTE BISTio::GetPins()
@@ -84,8 +97,11 @@ bool BISTio::SendTDITMSBits(BYTE *tdi, BYTE *tms, int bits, BYTE *tdo)
 	memset(words,0,sizeof(BYTE)*length);
 	for (int i = 0; i < bits; i++)
 	{
-		words[i/4] |= (tdi[i/8] << ((i%4)*2));
-		words[i/4] |= (tdi[i/8] << ((i%4)*2+1));
+		int mask = 1 << i%8;							// build a mask so we can pick the right bit of the tms and tdi arrays
+		if ((tdi[i/8] & mask) == mask)					// if the bit in tdi here is a 1, then we need to set the appropriate bit of the folded array to a 1
+			words[i/4] |= 1 << ((i%4)*2);
+		if ((tms[i/8] & mask) == mask)
+			words[i/4] |= 2 << ((i%4)*2);					// same thing happens for tms except it starts at bit 1 since tdi and tms alternate
 	}
 
 	if (DjtgPutTmsTdiBits(this->_hif, words, tdo, bits, FALSE) == 0)
@@ -102,12 +118,29 @@ bool BISTio::GetTDOBits(bool tdi, bool tms, BYTE *tdo, int bits)
 		return false;
 	return true;
 }
+ERC BISTio::GetLastError() { return DmgrGetLastError(); }
+BOOL BISTio::StringFromERC(ERC erc, char *szErrorName, int iNameLength, char *szErrorDesc, int iDescLen) 
+{ 
+	char name[cchErcMax+20];
+	char desc[cchErcMsgMax+20];
+
+	memset(name,0,sizeof(char)*cchErcMax+20);
+	memset(desc,0,sizeof(char)*cchErcMsgMax+20);
+
+	BOOL ret = DmgrSzFromErc(erc,name, desc); 
+	strncpy(szErrorName,name,iNameLength-1);
+	strncpy(szErrorDesc,desc,iDescLen-1);
+	return ret;
+}
+
 BYTE *BISTio::ReverseBits(BYTE *data, int bits)
 {
 	// So this is sort of complicated because we have to reverse the bits not the byte array
 	// This means if the bits don't fall on a byte boundary it can get hairy
-	int length = bits / 8 + bits % 8;
+	int length = bits / 8;
 	int shift = bits % 8;
+	if (shift > 0)
+		length++;
 
 	// Handle Simple Case
 	if (data == NULL)
@@ -125,22 +158,18 @@ BYTE *BISTio::ReverseBits(BYTE *data, int bits)
 	// This will make it worst case something like 3/2n
 	unsigned short swapBuffer = 0;
 	int farIndex = 0;
-	for (int i = 0; i <= length/2;  i++)
+	for (int i = 0; i < length/2;  i++)
 	{
 		// Update the far index
 		farIndex = length-i-1,
 
-		// Reverse Both Bytes
-		ReverseByte(data[i]);
-		ReverseByte(data[farIndex]);
-		
-		// Swap them (borrowing the swapBuffer)
-		swapBuffer = data[farIndex];
-		data[farIndex] = data[i];
-		data[i] = (BYTE)swapBuffer;
+		// Reverse both bytes and switch their index
+		swapBuffer = ReverseByte(data[i]);
+		data[i] = ReverseByte(data[farIndex]);
+		data[farIndex] = (BYTE)swapBuffer;
 	}
-	if (length%2 == 1)						// if it is odd, we need to reverse the bits of the middle byte
-		ReverseByte(data[length/2+1]);		// even though it doesn't change position
+	if (length%2 == 1)									// if it is odd, we need to reverse the bits of the middle byte
+		data[length/2] = ReverseByte(data[length/2]);	// even though it doesn't change position
 
 	// Repack the bits if necessary
 	// If the bits don't end on a word boundary we have to repack them together after reversing them
@@ -157,7 +186,7 @@ BYTE *BISTio::ReverseBits(BYTE *data, int bits)
 
 	return data;
 }
-BYTE& BISTio::ReverseByte(BYTE &data)
+BYTE BISTio::ReverseByte(BYTE data)
 {
 	data = (data & 0x0F) << 4 | (data & 0xF0) >> 4;
 	data = (data & 0x33) << 2 | (data & 0xCC) >> 2;
